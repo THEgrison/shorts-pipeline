@@ -26,11 +26,17 @@ from shorts_pipeline.agents.dummy import (
     DummyDiscoveryInput,
     DummyEditingAgent,
     DummyEditingInput,
-    DummyPublishingAgent,
-    DummyPublishingInput,
 )
 from shorts_pipeline.agents.editing.agent import EditingAgent, EditingInput
 from shorts_pipeline.agents.editing.persist import persist_render
+from shorts_pipeline.agents.publishing.agent import PublishingAgent, PublishingInput
+from shorts_pipeline.agents.publishing.persist import persist_publication
+from shorts_pipeline.agents.publishing.scheduler import (
+    already_published_identical,
+    can_publish_today,
+    next_slot,
+)
+from shorts_pipeline.agents.publishing.tokens import get_access_token
 from shorts_pipeline.clients.youtube import YouTubeClient
 from shorts_pipeline.config import Settings, get_settings
 from shorts_pipeline.db.enums import (
@@ -38,11 +44,18 @@ from shorts_pipeline.db.enums import (
     ClipStatus,
     JobStatus,
     LicenseBasis,
-    PublicationStatus,
+    Platform,
     RenderStatus,
     VideoStatus,
 )
-from shorts_pipeline.db.models import Clip, JobLog, Publication, Render, SourceVideo, Transcript
+from shorts_pipeline.db.models import (
+    Account,
+    Clip,
+    JobLog,
+    Render,
+    SourceVideo,
+    Transcript,
+)
 from shorts_pipeline.logging_setup import get_logger
 from shorts_pipeline.metrics import JOB_DURATION_SECONDS, JOBS_TOTAL
 from shorts_pipeline.orchestrator.job_logger import finish_job, start_job
@@ -82,7 +95,7 @@ class Orchestrator:
         self.editing: EditingAgent | DummyEditingAgent = editing_agent or EditingAgent(
             settings=self.settings
         )
-        self.publishing = DummyPublishingAgent()
+        self.publishing = PublishingAgent(settings=self.settings)
 
     def _build_discovery_agent(self) -> DiscoveryAgent | DummyDiscoveryAgent:
         """Use real DiscoveryAgent when a YouTube API key (or injected client) is available."""
@@ -360,22 +373,17 @@ class Orchestrator:
             msg = f"Render {render_id} not found"
             raise ValueError(msg)
         clip = render.clip
-        idempotency_key = f"render-{render_id}-dummy"
+        account_id = self._ensure_dummy_account()
+        account = self.session.get(Account, account_id)
+        assert account is not None
+        idempotency_key = f"render-{render_id}-account-{account_id}"
 
-        # Idempotent: already published
-        existing_pub = (
-            self.session.query(Publication)
-            .filter_by(render_id=render_id, idempotency_key=idempotency_key)
-            .one_or_none()
-        )
-        if existing_pub and existing_pub.status in {
-            PublicationStatus.PUBLISHED,
-            PublicationStatus.DRY_RUN,
-        }:
+        dup = already_published_identical(self.session, render_id=render_id, account_id=account_id)
+        if dup:
             return {
                 "success": True,
                 "idempotent": True,
-                "publication_id": existing_pub.id,
+                "publication_id": dup.id,
             }
         if clip.status == ClipStatus.PUBLISHED:
             return {"success": True, "idempotent": True, "message": "clip already published"}
@@ -388,7 +396,6 @@ class Orchestrator:
                 "message": "clip awaiting human review",
             }
         if clip.status not in {ClipStatus.APPROVED, ClipStatus.SCHEDULED}:
-            # Auto-approve path when review disabled and still rendered
             if clip.status == ClipStatus.RENDERED and not self.settings.require_review:
                 clip.status = apply_clip_transition(clip.status, ClipStatus.APPROVED)
             else:
@@ -397,6 +404,13 @@ class Orchestrator:
                     "message": f"clip status {clip.status} not publishable",
                 }
 
+        if not can_publish_today(self.session, account):
+            return {
+                "success": False,
+                "rate_limited": True,
+                "message": "max posts per day reached for account",
+            }
+
         started = time.perf_counter()
         job = start_job(
             self.session,
@@ -404,53 +418,63 @@ class Orchestrator:
             celery_task_id=celery_task_id,
             clip_id=clip.id,
             render_id=render_id,
-            input_payload={"render_id": render_id},
+            input_payload={"render_id": render_id, "account_id": account_id},
         )
         try:
             clip.status = apply_clip_transition(clip.status, ClipStatus.SCHEDULED)
+            scheduled_at = next_slot(
+                account, jitter_seconds=self.settings.publishing_jitter_seconds
+            )
+            video_path = self._resolve_render_path(render)
+            token = get_access_token(account, self.settings)
+            hashtags = list(clip.suggested_hashtags or [])
             result = self.publishing.run(
-                DummyPublishingInput(
+                PublishingInput(
                     render_id=render_id,
+                    account_id=account_id,
+                    platform=account.platform,
+                    video_path=video_path,
+                    access_token=token,
+                    seed_title=render.title or clip.suggested_title,
+                    seed_description=render.description or clip.reason,
+                    seed_hashtags=hashtags,
+                    idempotency_key=idempotency_key,
                     dry_run=self.settings.dry_run,
+                    privacy_status="private",
                 )
             )
-
-            pub_status = (
-                PublicationStatus.DRY_RUN if self.settings.dry_run else PublicationStatus.PUBLISHED
-            )
-            from shorts_pipeline.db.enums import Platform
-
-            publication = Publication(
-                render_id=render_id,
-                account_id=self._ensure_dummy_account(),
-                platform=Platform.YOUTUBE_SHORTS,
-                status=pub_status,
-                title=render.title,
-                description=render.description,
-                external_url=result.external_url,
+            publication = persist_publication(
+                self.session,
+                result=result,
                 idempotency_key=idempotency_key,
-                attempt_count=1,
+                scheduled_at=scheduled_at,
             )
-            self.session.add(publication)
-            clip.status = apply_clip_transition(clip.status, ClipStatus.PUBLISHED)
+            if result.success:
+                clip.status = apply_clip_transition(clip.status, ClipStatus.PUBLISHED)
             duration = time.perf_counter() - started
             finish_job(
                 self.session,
                 job,
-                status=JobStatus.SUCCESS,
+                status=JobStatus.SUCCESS if result.success else JobStatus.FAILED,
                 output_payload={
-                    "publication_status": pub_status.value,
+                    "publication_status": publication.status.value,
                     "external_url": result.external_url,
+                    "publication_id": publication.id,
                 },
                 duration_sec=duration,
+                error_message=result.error,
             )
-            JOBS_TOTAL.labels(agent="publishing", status="success").inc()
+            JOBS_TOTAL.labels(
+                agent="publishing",
+                status="success" if result.success else "failed",
+            ).inc()
             JOB_DURATION_SECONDS.labels(agent="publishing").observe(duration)
             self.session.commit()
             return {
-                "success": True,
-                "publication_status": pub_status.value,
+                "success": result.success,
+                "publication_status": publication.status.value,
                 "external_url": result.external_url,
+                "publication_id": publication.id,
                 "job_id": job.id,
             }
         except Exception as exc:
@@ -626,10 +650,22 @@ class Orchestrator:
         except Exception:
             return False
 
-    def _ensure_dummy_account(self) -> int:
-        from shorts_pipeline.db.enums import Platform
-        from shorts_pipeline.db.models import Account
+    def _resolve_render_path(self, render: Render) -> Path:
+        if render.storage_key:
+            candidate = Path(render.storage_key)
+            if candidate.exists():
+                return candidate
+            rooted = self.settings.storage_local_root / render.storage_key
+            if rooted.exists():
+                return rooted
+        # Dry-run placeholder when no rendered file is on disk
+        placeholder = self.settings.storage_temp_dir / "dry-run-placeholder.mp4"
+        placeholder.parent.mkdir(parents=True, exist_ok=True)
+        if not placeholder.exists():
+            placeholder.write_bytes(b"\x00")
+        return placeholder
 
+    def _ensure_dummy_account(self) -> int:
         account = (
             self.session.query(Account)
             .filter_by(platform=Platform.YOUTUBE_SHORTS, external_account_id="dummy-yt")
@@ -642,6 +678,8 @@ class Orchestrator:
             display_name="Dummy YouTube",
             external_account_id="dummy-yt",
             is_active=True,
+            max_posts_per_day=self.settings.publishing_max_posts_per_day,
+            schedule_config={"slots": ["09:00", "14:00", "19:00"], "timezone": "UTC"},
         )
         self.session.add(account)
         self.session.flush()
