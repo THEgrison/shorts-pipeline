@@ -37,12 +37,12 @@ flowchart LR
 | **Analysis** | Télécharge, transcrit (Whisper), détecte les meilleurs moments (LLM) |
 | **Editing** | Découpe 9:16, sous-titres ASS, audio, miniature |
 | **Publishing** | Upload multi-plateforme avec scheduler et idempotence |
-| **Orchestrator** | Machine à états, file Celery, retries, dead-letter |
+| **Orchestrator** | Machine à états, file Celery, retries, dead-letter, cleanup |
 
 ## Stack
 
 - Python 3.11+ (`uv`)
-- FastAPI + Celery + Redis
+- FastAPI + HTMX dashboard + Celery + Redis
 - PostgreSQL + SQLAlchemy 2.0 + Alembic
 - Docker Compose (api, workers, redis, postgres, flower)
 - structlog + Prometheus metrics
@@ -52,36 +52,34 @@ flowchart LR
 
 ```bash
 cp .env.example .env
-# Renseigner au minimum SECRET_KEY et FERNET_KEY
 uv run shorts-pipeline gen-fernet-key   # coller dans FERNET_KEY
 
 docker compose up --build
 ```
 
-- API / dashboard : http://localhost:8742  
+- Dashboard : http://localhost:8742/dashboard  
 - Flower : http://localhost:5555  
-- Docs OpenAPI : http://localhost:8742/docs  
+- OpenAPI : http://localhost:8742/docs  
 
 `DRY_RUN=true` (défaut) exécute le pipeline **sans publier**.
 
 ## Développement local
 
 ```bash
-# Prérequis : Python 3.11+, uv, ffmpeg ; Postgres + Redis (ou docker compose up postgres redis)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 cp .env.example .env
-
 uv sync --all-extras
+# Postgres + Redis via: docker compose up postgres redis -d
 uv run alembic upgrade head
-uv run shorts-pipeline serve          # API sur :8742
-uv run celery -A shorts_pipeline.workers.celery_app.celery_app worker -Q orchestrator -l INFO
+uv run shorts-pipeline serve          # API :8742
+uv run celery -A shorts_pipeline.workers.celery_app.celery_app worker \
+  -Q discovery,analysis,editing,publishing,orchestrator -l INFO
 ```
 
 ### Qualité
 
 ```bash
-uv run ruff check src tests
-uv run ruff format src tests
+uv run ruff check src tests && uv run ruff format src tests
 uv run mypy src
 uv run pytest -q
 pre-commit install
@@ -93,7 +91,7 @@ pre-commit install
 |----------|--------|
 | `YOUTUBE_API_KEY` | YouTube Data API v3 (discovery + quota) |
 | `YOUTUBE_OAUTH_CLIENT_ID` / `_SECRET` | Upload YouTube Shorts |
-| `ANTHROPIC_API_KEY` | Détection de moments (Claude) |
+| `ANTHROPIC_API_KEY` | Détection de moments + copy (Claude) |
 | `TIKTOK_CLIENT_KEY` / `_SECRET` | TikTok Content Posting API |
 | `META_APP_ID` / `META_APP_SECRET` | Instagram Reels (Graph API) |
 | `FERNET_KEY` | Chiffrement des tokens OAuth en base |
@@ -105,26 +103,37 @@ Voir `.env.example` pour la liste complète.
 
 Le Discovery Agent **ne retient que** :
 
-1. Les chaînes présentes dans `channels_whitelist` (vos chaînes / autorisées), **ou**
+1. Les chaînes présentes dans `channels_whitelist`, **ou**
 2. Les vidéos sous licence **Creative Commons**
 
-Chaque ligne `source_videos` stocke `license_basis` (`whitelist` | `creative_commons`).
+Chaque `source_videos` stocke `license_basis` (`whitelist` | `creative_commons`).
 
-Niches / mots-clés : `config/niches.yaml`. Styles de sous-titres : `config/styles/`.
+Niches : `config/niches.yaml`. Styles : `config/styles/`.
 
 ## Modèle de données
 
 `channels_whitelist` → `source_videos` → `transcripts` / `clips` → `renders` → `publications`  
 + `accounts`, `jobs_log`, `style_templates`
 
-Statuts vidéo : `discovered → downloaded → transcribed → analyzed → …`  
-Statuts clip : `analyzed → rendered → awaiting_review → scheduled → published | failed`
+**Vidéo** : `discovered → downloaded → transcribed → analyzed → failed|skipped`  
+**Clip** : `analyzed → rendered → awaiting_review → approved → scheduled → published | failed`
+
+## Dashboard
+
+Contrôle HTMX sur `/dashboard` :
+
+- Stats (clips, publiés, échecs, review, quota)
+- Listes filtrables vidéos / clips / rendus / publications
+- Édition titre/description avant publish
+- Approuver / rejeter (human-in-the-loop)
+- Pause / resume agents
+- Page config (runtime, whitelist, comptes, niches)
 
 ## Services Compose
 
 | Service | Rôle |
 |---------|------|
-| `api` | FastAPI + migrations Alembic au démarrage |
+| `api` | FastAPI + migrations Alembic |
 | `worker-discovery` | Queue `discovery` |
 | `worker-analysis` | Queue `analysis` |
 | `worker-editing` | Queue `editing` |
@@ -132,28 +141,24 @@ Statuts clip : `analyzed → rendered → awaiting_review → scheduled → publ
 | `redis` / `postgres` | Broker + état |
 | `flower` | Monitoring Celery |
 
-Stockage fichiers : volume `/data/shorts` derrière l’interface `StorageBackend` (local aujourd’hui, S3/MinIO plus tard).
+Stockage : volume `/data/shorts` derrière `StorageBackend` (local → S3/MinIO plus tard).
 
-## Roadmap d’implémentation
+## Roadmap
 
 1. ✅ Squelette, Docker, config, DB, logging, CI  
 2. ✅ Orchestrator + Celery + agent factice  
 3. ✅ Discovery Agent (licence + score + dédup)  
 4. ✅ Analysis Agent (yt-dlp, Whisper, LLM)  
 5. ✅ Editing Agent (9:16, ASS, loudnorm)  
-6. Publishing Agent  
-7. Dashboard + review + notifications  
-8. Durcissement / monitoring / doc finale  
+6. ✅ Publishing Agent (YouTube, TikTok, Instagram)  
+7. ✅ Dashboard + review + notifications  
+8. ✅ Durcissement (retries, cleanup, monitoring, doc)
 
-### Contrôle pipeline (Phase 2)
+### Contrôle pipeline
 
 ```bash
-# Smoke sync (agents factices, DRY_RUN)
 curl -X POST http://localhost:8742/api/pipeline/dummy-e2e
-
-# Pause / resume un agent
-curl -X POST http://localhost:8742/api/pipeline/agents/pause \
-  -H 'Content-Type: application/json' -d '{"agent":"discovery"}'
+curl http://localhost:8742/dashboard
 ```
 
 Décisions d’architecture : [`DECISIONS.md`](DECISIONS.md).

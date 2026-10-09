@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Config — Shorts Pipeline{% endblock %}
+{% block content %}
+<h1>Configuration</h1>
+<div class="panel">
+  <h2>Runtime</h2>
+  <table>
+    <tr><th>Clé</th><th>Valeur</th></tr>
+    <tr><td>DRY_RUN</td><td><code>{{ settings.dry_run }}</code></td></tr>
+    <tr><td>REQUIRE_REVIEW</td><td><code>{{ settings.require_review }}</code></td></tr>
+    <tr><td>Whisper model</td><td><code>{{ settings.whisper_model }}</code></td></tr>
+    <tr><td>Anthropic model</td><td><code>{{ settings.anthropic_model }}</code></td></tr>
+    <tr><td>Style sous-titres</td><td><code>{{ settings.editing_default_style_template }}</code></td></tr>
+    <tr><td>Max posts/jour</td><td><code>{{ settings.publishing_max_posts_per_day }}</code></td></tr>
+    <tr><td>Storage</td><td><code>{{ settings.storage_local_root }}</code></td></tr>
+  </table>
+  <p class="muted">Les secrets (API keys, OAuth) se configurent via <code>.env</code> — jamais exposés ici.</p>
+</div>
+
+<div class="panel">
+  <h2>Chaînes whitelist</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Channel</th><th>Titre</th><th>Active</th></tr></thead>
+    <tbody>
+    {% for c in channels %}
+      <tr>
+        <td>{{ c.id }}</td>
+        <td><code>{{ c.youtube_channel_id }}</code></td>
+        <td>{{ c.title }}</td>
+        <td>{{ c.is_active }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">Aucune chaîne. Ajoutez des lignes dans <code>channels_whitelist</code>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Comptes connectés</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Plateforme</th><th>Nom</th><th>Max/jour</th><th>Actif</th></tr></thead>
+    <tbody>
+    {% for a in accounts %}
+      <tr>
+        <td>{{ a.id }}</td>
+        <td>{{ a.platform.value }}</td>
+        <td>{{ a.display_name }}</td>
+        <td>{{ a.max_posts_per_day }}</td>
+        <td>{{ a.is_active }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">Aucun compte OAuth enregistré.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Niches (fichier)</h2>
+  <pre class="muted" style="white-space:pre-wrap">{{ niches_preview }}</pre>
+</div>
+{% endblock %}

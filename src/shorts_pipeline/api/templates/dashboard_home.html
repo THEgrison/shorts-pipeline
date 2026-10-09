@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Overview — Shorts Pipeline{% endblock %}
+{% block content %}
+<h1>Vue d’ensemble</h1>
+<p class="muted">DRY_RUN={{ dry_run }} · review={{ require_review }} · quota YouTube restant ≈ {{ quota_remaining }}</p>
+
+<div class="grid" style="margin:1.25rem 0">
+  <div class="stat"><div class="n">{{ stats.videos }}</div><div class="l">Vidéos sources</div></div>
+  <div class="stat"><div class="n">{{ stats.clips }}</div><div class="l">Clips</div></div>
+  <div class="stat"><div class="n">{{ stats.renders }}</div><div class="l">Rendus</div></div>
+  <div class="stat"><div class="n">{{ stats.published }}</div><div class="l">Publiés / dry-run</div></div>
+  <div class="stat"><div class="n">{{ stats.failed }}</div><div class="l">Échecs jobs</div></div>
+  <div class="stat"><div class="n">{{ stats.awaiting }}</div><div class="l">En review</div></div>
+</div>
+
+<div class="panel">
+  <h2>Actions rapides</h2>
+  <div class="actions">
+    <form class="inline" method="post" action="/dashboard/actions/discovery">
+      <button type="submit">Lancer discovery</button>
+    </form>
+    <form class="inline" method="post" action="/dashboard/actions/advance">
+      <button type="submit" class="secondary">Avancer le pipeline</button>
+    </form>
+    <form class="inline" method="post" action="/dashboard/actions/dummy-e2e">
+      <button type="submit" class="secondary">Smoke dummy E2E</button>
+    </form>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Agents</h2>
+  <table>
+    <thead><tr><th>Agent</th><th>État</th><th></th></tr></thead>
+    <tbody>
+    {% for agent, paused in agents %}
+      <tr>
+        <td>{{ agent }}</td>
+        <td>{% if paused %}<span class="badge warn">paused</span>{% else %}<span class="badge ok">running</span>{% endif %}</td>
+        <td class="actions">
+          {% if paused %}
+          <form class="inline" method="post" action="/dashboard/agents/{{ agent }}/resume"><button class="secondary">Resume</button></form>
+          {% else %}
+          <form class="inline" method="post" action="/dashboard/agents/{{ agent }}/pause"><button class="secondary">Pause</button></form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

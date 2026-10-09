@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{% block title %}Shorts Pipeline{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    :root {
+      --bg: #0e1512;
+      --panel: #16201b;
+      --fg: #e8f0ea;
+      --muted: #8aa193;
+      --accent: #3dd68c;
+      --warn: #f0b429;
+      --danger: #ff6b6b;
+      --line: #24332b;
+      --font-display: "Fraunces", "Georgia", serif;
+      --font-body: "Source Sans 3", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background:
+        radial-gradient(1200px 600px at 10% -10%, #1a3d2e 0%, transparent 50%),
+        radial-gradient(900px 500px at 100% 0%, #243018 0%, transparent 45%),
+        var(--bg);
+      color: var(--fg); font-family: var(--font-body); min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header {
+      display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
+      justify-content: space-between; padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--line); backdrop-filter: blur(8px);
+      position: sticky; top: 0; background: rgba(14,21,18,.85); z-index: 10;
+    }
+    .brand { font-family: var(--font-display); font-size: 1.4rem; color: var(--accent); letter-spacing: -.02em; }
+    nav { display: flex; flex-wrap: wrap; gap: .85rem; }
+    nav a { color: var(--muted); font-weight: 600; }
+    nav a.active, nav a:hover { color: var(--fg); }
+    main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+    h1, h2 { font-family: var(--font-display); font-weight: 700; letter-spacing: -.02em; }
+    .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+    .stat {
+      background: linear-gradient(160deg, #1c2a22, var(--panel));
+      border: 1px solid var(--line); padding: 1rem 1.1rem;
+    }
+    .stat .n { font-size: 1.8rem; font-family: var(--font-display); color: var(--accent); }
+    .stat .l { color: var(--muted); font-size: .85rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+    th, td { text-align: left; padding: .65rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+    .badge {
+      display: inline-block; padding: .15rem .45rem; font-size: .75rem; font-weight: 600;
+      border: 1px solid var(--line); background: #132019; color: var(--muted);
+    }
+    .badge.ok { color: var(--accent); border-color: #2a5a40; }
+    .badge.warn { color: var(--warn); border-color: #5a4a20; }
+    .badge.err { color: var(--danger); border-color: #5a2a2a; }
+    .actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+    button, .btn {
+      background: var(--accent); color: #062015; border: 0; padding: .4rem .75rem;
+      font-weight: 700; cursor: pointer; font-family: inherit; font-size: .85rem;
+    }
+    button.secondary, .btn.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+    button.danger { background: var(--danger); color: #1a0505; }
+    .panel { background: var(--panel); border: 1px solid var(--line); padding: 1rem; margin-top: 1rem; }
+    .muted { color: var(--muted); }
+    form.inline { display: inline; }
+    input, select, textarea {
+      background: #0f1813; border: 1px solid var(--line); color: var(--fg);
+      padding: .45rem .6rem; width: 100%; font: inherit;
+    }
+    label { display: block; margin: .6rem 0 .25rem; color: var(--muted); font-size: .85rem; }
+    .flash { padding: .75rem 1rem; border: 1px solid #2a5a40; background: #132819; margin-bottom: 1rem; }
+    @media (max-width: 640px) {
+      main { padding: 1rem; }
+      table { font-size: .85rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Shorts Pipeline</div>
+    <nav>
+      <a href="/dashboard" class="{% if nav == 'home' %}active{% endif %}">Overview</a>
+      <a href="/dashboard/videos" class="{% if nav == 'videos' %}active{% endif %}">Videos</a>
+      <a href="/dashboard/clips" class="{% if nav == 'clips' %}active{% endif %}">Clips</a>
+      <a href="/dashboard/renders" class="{% if nav == 'renders' %}active{% endif %}">Renders</a>
+      <a href="/dashboard/publications" class="{% if nav == 'publications' %}active{% endif %}">Publications</a>
+      <a href="/dashboard/config" class="{% if nav == 'config' %}active{% endif %}">Config</a>
+    </nav>
+  </header>
+  <main>
+    {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

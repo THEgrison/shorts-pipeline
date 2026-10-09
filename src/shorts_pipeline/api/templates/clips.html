@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Clips — Shorts Pipeline{% endblock %}
+{% block content %}
+<h1>Clips</h1>
+<form method="get" class="panel" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:end">
+  <div style="min-width:160px">
+    <label>Statut</label>
+    <select name="status">
+      <option value="">Tous</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {% if status==s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button type="submit" class="secondary">Filtrer</button>
+</form>
+<div class="panel">
+<table>
+  <thead>
+    <tr><th>ID</th><th>Vidéo</th><th>Plage</th><th>Score</th><th>Titre / hook</th><th>Statut</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+  {% for c in clips %}
+    <tr>
+      <td>{{ c.id }}</td>
+      <td>{{ c.source_video_id }}</td>
+      <td>{{ '%.1f'|format(c.start_sec) }}s → {{ '%.1f'|format(c.end_sec) }}s</td>
+      <td>{{ '%.0f'|format(c.score) }}</td>
+      <td>
+        <strong>{{ c.suggested_title or "—" }}</strong><br/>
+        <span class="muted">{{ c.hook or "" }}</span>
+        <form method="post" action="/dashboard/clips/{{ c.id }}/meta" style="margin-top:.5rem">
+          <input name="title" value="{{ c.suggested_title or '' }}" placeholder="Titre"/>
+          <textarea name="description" rows="2" placeholder="Description">{{ c.reason or '' }}</textarea>
+          <button type="submit" class="secondary">Sauver</button>
+        </form>
+      </td>
+      <td><span class="badge {% if c.status.value=='awaiting_review' %}warn{% elif c.status.value=='published' %}ok{% elif c.status.value=='rejected' or c.status.value=='failed' %}err{% endif %}">{{ c.status.value }}</span></td>
+      <td class="actions">
+        <form class="inline" method="post" action="/dashboard/clips/{{ c.id }}/edit"><button class="secondary">Rendre</button></form>
+        {% if c.status.value == 'awaiting_review' %}
+        <form class="inline" method="post" action="/dashboard/clips/{{ c.id }}/approve"><button>Approuver</button></form>
+        <form class="inline" method="post" action="/dashboard/clips/{{ c.id }}/reject"><button class="danger">Rejeter</button></form>
+        {% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">Aucun clip.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

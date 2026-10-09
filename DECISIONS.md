@@ -60,3 +60,17 @@ Downloader / Transcriber / MomentDetector interfaces allow Fake* doubles in test
 
 ### Editing falls back to Dummy when media is invalid
 Orchestrator probes with ffprobe before invoking ffmpeg so placeholder analysis files do not crash the pipeline in tests/dry-run.
+
+## 2026-10-09 — Phase 6–8
+
+### Publishing defaults to private / SELF_ONLY
+Safer for unaudited TikTok apps and accidental live posts; flip per-request when ready.
+
+### Instagram needs a public `video_url`
+Graph Reels API does not accept raw local uploads in this implementation; dry-run works; production should point to CDN/S3 URL.
+
+### Dashboard is HTMX + Jinja (not React)
+Fastest path to a usable control plane; React can replace later without changing API routes.
+
+### Scheduler slots interpreted as UTC
+Keep timezone logic simple; store IANA tz in `schedule_config` for a future upgrade.

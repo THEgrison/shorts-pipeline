@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Publications — Shorts Pipeline{% endblock %}
+{% block content %}
+<h1>Publications</h1>
+<div class="panel">
+<table>
+  <thead><tr><th>ID</th><th>Render</th><th>Plateforme</th><th>Titre</th><th>Statut</th><th>URL</th><th>Erreur</th></tr></thead>
+  <tbody>
+  {% for p in publications %}
+    <tr>
+      <td>{{ p.id }}</td>
+      <td>{{ p.render_id }}</td>
+      <td>{{ p.platform.value }}</td>
+      <td>{{ p.title or "—" }}</td>
+      <td><span class="badge {% if p.status.value in ['published','dry_run'] %}ok{% elif p.status.value=='failed' %}err{% endif %}">{{ p.status.value }}</span></td>
+      <td>{% if p.external_url %}<a href="{{ p.external_url }}" target="_blank" rel="noopener">ouvrir</a>{% else %}—{% endif %}</td>
+      <td class="muted">{{ p.error_message or "" }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">Aucune publication.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Videos — Shorts Pipeline{% endblock %}
+{% block content %}
+<h1>Vidéos sources</h1>
+<form method="get" class="panel" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:end">
+  <div style="min-width:160px">
+    <label>Statut</label>
+    <select name="status">
+      <option value="">Tous</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {% if status==s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button type="submit" class="secondary">Filtrer</button>
+</form>
+<div class="panel">
+<table>
+  <thead>
+    <tr><th>ID</th><th>YouTube</th><th>Titre</th><th>Licence</th><th>Score</th><th>Statut</th><th></th></tr>
+  </thead>
+  <tbody>
+  {% for v in videos %}
+    <tr>
+      <td>{{ v.id }}</td>
+      <td><code>{{ v.youtube_video_id }}</code></td>
+      <td>{{ v.title[:80] }}</td>
+      <td><span class="badge">{{ v.license_basis.value }}</span></td>
+      <td>{{ v.relevance_score or "—" }}</td>
+      <td><span class="badge {% if v.status.value=='failed' %}err{% elif v.status.value=='analyzed' %}ok{% else %}warn{% endif %}">{{ v.status.value }}</span></td>
+      <td class="actions">
+        <form class="inline" method="post" action="/dashboard/videos/{{ v.id }}/analyze"><button class="secondary">Analyser</button></form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">Aucune vidéo. Lancez discovery ou branchez Postgres.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

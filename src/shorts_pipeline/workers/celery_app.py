@@ -38,5 +38,10 @@ celery_app.conf.update(
             "task": "shorts_pipeline.workers.tasks.orchestrator.advance_pipeline",
             "schedule": 120.0,
         },
+        "cleanup-temp-hourly": {
+            "task": "shorts_pipeline.workers.tasks.orchestrator.cleanup_temp",
+            "schedule": 3600.0,
+            "kwargs": {"max_age_hours": 24.0},
+        },
     },
 )

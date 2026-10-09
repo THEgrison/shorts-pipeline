@@ -94,9 +94,7 @@ class YouTubeShortsPublisher(Publisher):
         data: dict[str, Any] = put.json()
         video_id_val = data.get("id")
         video_id = str(video_id_val) if video_id_val else None
-        external_url: str | None = (
-            f"https://youtube.com/shorts/{video_id}" if video_id else None
-        )
+        external_url: str | None = f"https://youtube.com/shorts/{video_id}" if video_id else None
         logger.info("youtube.published", video_id=video_id)
         return PublishResult(
             success=True,

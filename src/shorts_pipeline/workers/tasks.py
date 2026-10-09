@@ -112,6 +112,16 @@ def advance_pipeline(self: Any) -> dict[str, Any]:
         return {"success": True, "summary": summary}
 
 
+@shared_task(name="shorts_pipeline.workers.tasks.orchestrator.cleanup_temp")
+def cleanup_temp(max_age_hours: float = 24.0) -> dict[str, Any]:
+    """Celery task: purge old temp media files."""
+    from shorts_pipeline.orchestrator.cleanup import cleanup_temp_files
+
+    result = cleanup_temp_files(max_age_hours=max_age_hours)
+    logger.info("task.cleanup_temp", **result)
+    return {"success": True, **result}
+
+
 @shared_task(name="shorts_pipeline.workers.tasks.orchestrator.run_full_dummy_pipeline")
 def run_full_dummy_pipeline(niches: list[str] | None = None) -> dict[str, Any]:
     """End-to-end dummy pipeline for smoke tests (discovery → publish)."""
