@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from shorts_pipeline import __version__
-from shorts_pipeline.api.routes import health, metrics_route
+from shorts_pipeline.api.routes import health, metrics_route, pipeline
 from shorts_pipeline.config import get_settings
 from shorts_pipeline.logging_setup import get_logger, setup_logging
 
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(metrics_route.router)
+    app.include_router(pipeline.router)
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_home() -> str:

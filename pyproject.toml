@@ -103,6 +103,7 @@ packages = ["shorts_pipeline"]
 
 [[tool.mypy.overrides]]
 module = [
+    "celery",
     "celery.*",
     "flower.*",
     "yt_dlp.*",
@@ -111,8 +112,14 @@ module = [
     "mediapipe.*",
     "scenedetect.*",
     "librosa.*",
+    "redis",
+    "redis.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["shorts_pipeline.workers.tasks"]
+disable_error_code = ["untyped-decorator"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

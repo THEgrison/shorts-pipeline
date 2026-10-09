@@ -137,12 +137,23 @@ Stockage fichiers : volume `/data/shorts` derrière l’interface `StorageBacken
 ## Roadmap d’implémentation
 
 1. ✅ Squelette, Docker, config, DB, logging, CI  
-2. Orchestrator + Celery + agent factice  
+2. ✅ Orchestrator + Celery + agent factice  
 3. Discovery Agent  
 4. Analysis Agent  
 5. Editing Agent  
 6. Publishing Agent  
 7. Dashboard + review + notifications  
 8. Durcissement / monitoring / doc finale  
+
+### Contrôle pipeline (Phase 2)
+
+```bash
+# Smoke sync (agents factices, DRY_RUN)
+curl -X POST http://localhost:8742/api/pipeline/dummy-e2e
+
+# Pause / resume un agent
+curl -X POST http://localhost:8742/api/pipeline/agents/pause \
+  -H 'Content-Type: application/json' -d '{"agent":"discovery"}'
+```
 
 Décisions d’architecture : [`DECISIONS.md`](DECISIONS.md).

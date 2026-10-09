@@ -1,4 +1,4 @@
-"""Celery application — queues per agent (fleshed out in Phase 2)."""
+"""Celery application — queues per agent."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ celery_app = Celery(
     "shorts_pipeline",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
+    include=["shorts_pipeline.workers.tasks"],
 )
 
 celery_app.conf.update(
@@ -31,12 +32,11 @@ celery_app.conf.update(
         "shorts_pipeline.workers.tasks.orchestrator.*": {"queue": "orchestrator"},
     },
     task_default_queue="orchestrator",
-)
-
-# Autodiscover tasks once packages exist (Phase 2+)
-celery_app.autodiscover_tasks(
-    packages=[
-        "shorts_pipeline.workers",
-    ],
-    related_name="tasks",
+    # Beat schedule filled in Phase 8; Phase 2 can trigger advance manually
+    beat_schedule={
+        "advance-pipeline-every-2-minutes": {
+            "task": "shorts_pipeline.workers.tasks.orchestrator.advance_pipeline",
+            "schedule": 120.0,
+        },
+    },
 )

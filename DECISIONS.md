@@ -30,3 +30,14 @@ If `FERNET_KEY` is not a valid Fernet key, derive one from `SECRET_KEY` and log 
 
 ### Docker optional in this cloud environment
 Compose files are first-class; local unit tests use SQLite in-memory so CI/agent runs without Docker.
+
+## 2026-10-09 — Phase 2
+
+### Dummy agents before real integrations
+Orchestrator + Celery wiring is validated with `Dummy*Agent` implementations that persist real DB rows. Real YouTube/Whisper/LLM clients arrive in phases 3–6 without changing the orchestrator contract.
+
+### Pause flags: Redis with in-process fallback
+Agent pause uses Redis keys when available; falls back to a process-local set so unit tests and Redis-less smoke runs still work.
+
+### `require_review` gates publishing
+Default `REQUIRE_REVIEW=true`: after render, clips enter `awaiting_review` until `/api/pipeline/clips/{id}/approve`.
