@@ -8,6 +8,12 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from shorts_pipeline.agents.analysis.agent import (
+    AnalysisAgent,
+    AnalysisInput,
+    build_test_analysis_agent,
+)
+from shorts_pipeline.agents.analysis.persist import persist_analysis
 from shorts_pipeline.agents.discovery.agent import DiscoveryAgent, DiscoveryInput
 from shorts_pipeline.agents.discovery.persist import (
     load_seen_video_ids,
@@ -15,8 +21,6 @@ from shorts_pipeline.agents.discovery.persist import (
     persist_discovered_videos,
 )
 from shorts_pipeline.agents.dummy import (
-    DummyAnalysisAgent,
-    DummyAnalysisInput,
     DummyDiscoveryAgent,
     DummyDiscoveryInput,
     DummyEditingAgent,
@@ -61,6 +65,7 @@ class Orchestrator:
         settings: Settings | None = None,
         *,
         discovery_agent: DiscoveryAgent | DummyDiscoveryAgent | None = None,
+        analysis_agent: AnalysisAgent | None = None,
         youtube_client: YouTubeClient | None = None,
     ) -> None:
         self.session = session
@@ -69,7 +74,7 @@ class Orchestrator:
         self.discovery: DiscoveryAgent | DummyDiscoveryAgent = (
             discovery_agent or self._build_discovery_agent()
         )
-        self.analysis = DummyAnalysisAgent()
+        self.analysis = analysis_agent or self._build_analysis_agent()
         self.editing = DummyEditingAgent()
         self.publishing = DummyPublishingAgent()
 
@@ -83,6 +88,19 @@ class Orchestrator:
             return DiscoveryAgent(client, settings=self.settings)
         logger.warning("discovery.using_dummy_agent_no_youtube_api_key")
         return DummyDiscoveryAgent()
+
+    def _build_analysis_agent(self) -> AnalysisAgent:
+        """Prefer real stack when keys exist; otherwise use fake collaborators."""
+        has_anthropic = (
+            self.settings.anthropic_api_key is not None
+            and self.settings.anthropic_api_key.get_secret_value()
+        )
+        # Tests / local dry-run without Anthropic: fully mocked collaborators
+        if self.settings.app_env == "test" or (
+            not has_anthropic and self.settings.dry_run
+        ):
+            return build_test_analysis_agent(settings=self.settings)
+        return AnalysisAgent(settings=self.settings)
 
     # ------------------------------------------------------------------ discovery
     def run_discovery(
@@ -211,35 +229,21 @@ class Orchestrator:
                     self.session.flush()
 
             result = self.analysis.run(
-                DummyAnalysisInput(
+                AnalysisInput(
                     source_video_id=video.id,
                     youtube_video_id=video.youtube_video_id,
                     dry_run=self.settings.dry_run,
                 )
             )
+            if result.storage_key:
+                video.storage_key = result.storage_key
 
-            clip_ids: list[int] = []
-            if result.success and not video.clips:
-                clip = Clip(
-                    source_video_id=video.id,
-                    start_sec=30.0,
-                    end_sec=60.0,
-                    score=88.0,
-                    hook="Voici le moment clé",
-                    reason="Dummy high-energy segment",
-                    suggested_title="Le moment que tout le monde rate",
-                    suggested_hashtags=["#shorts", "#viral"],
-                    status=ClipStatus.ANALYZED,
-                    rank=1,
-                )
-                self.session.add(clip)
-                self.session.flush()
-                clip_ids.append(clip.id)
-            else:
-                clip_ids = [c.id for c in video.clips]
+            clip_ids = persist_analysis(self.session, result)
+            self.session.flush()
 
             video.status = apply_video_transition(video.status, VideoStatus.ANALYZED)
             video.attempt_count = 0
+            video.error_message = None
             duration = time.perf_counter() - started
             finish_job(
                 self.session,
