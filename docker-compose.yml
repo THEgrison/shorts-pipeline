@@ -1,0 +1,161 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shorts
+      POSTGRES_PASSWORD: shorts
+      POSTGRES_DB: shorts_pipeline
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shorts -d shorts_pipeline"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    command: >
+      sh -c "uv run alembic upgrade head &&
+             uv run uvicorn shorts_pipeline.api.app:app --host 0.0.0.0 --port 8742"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://shorts:shorts@postgres:5432/shorts_pipeline
+      DATABASE_URL_SYNC: postgresql+psycopg2://shorts:shorts@postgres:5432/shorts_pipeline
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      STORAGE_LOCAL_ROOT: /data/shorts
+    ports:
+      - "8742:8742"
+    volumes:
+      - media_data:/data/shorts
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-discovery:
+    build: .
+    command: >
+      uv run celery -A shorts_pipeline.workers.celery_app.celery_app worker
+      -Q discovery -n discovery@%h --loglevel=INFO --concurrency=2
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://shorts:shorts@postgres:5432/shorts_pipeline
+      DATABASE_URL_SYNC: postgresql+psycopg2://shorts:shorts@postgres:5432/shorts_pipeline
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      STORAGE_LOCAL_ROOT: /data/shorts
+    volumes:
+      - media_data:/data/shorts
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-analysis:
+    build: .
+    command: >
+      uv run celery -A shorts_pipeline.workers.celery_app.celery_app worker
+      -Q analysis -n analysis@%h --loglevel=INFO --concurrency=1
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://shorts:shorts@postgres:5432/shorts_pipeline
+      DATABASE_URL_SYNC: postgresql+psycopg2://shorts:shorts@postgres:5432/shorts_pipeline
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      STORAGE_LOCAL_ROOT: /data/shorts
+    volumes:
+      - media_data:/data/shorts
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-editing:
+    build: .
+    command: >
+      uv run celery -A shorts_pipeline.workers.celery_app.celery_app worker
+      -Q editing -n editing@%h --loglevel=INFO --concurrency=1
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://shorts:shorts@postgres:5432/shorts_pipeline
+      DATABASE_URL_SYNC: postgresql+psycopg2://shorts:shorts@postgres:5432/shorts_pipeline
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      STORAGE_LOCAL_ROOT: /data/shorts
+    volumes:
+      - media_data:/data/shorts
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-publishing:
+    build: .
+    command: >
+      uv run celery -A shorts_pipeline.workers.celery_app.celery_app worker
+      -Q publishing,orchestrator -n publishing@%h --loglevel=INFO --concurrency=2
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://shorts:shorts@postgres:5432/shorts_pipeline
+      DATABASE_URL_SYNC: postgresql+psycopg2://shorts:shorts@postgres:5432/shorts_pipeline
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      STORAGE_LOCAL_ROOT: /data/shorts
+      DRY_RUN: "true"
+    volumes:
+      - media_data:/data/shorts
+      - ./config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  flower:
+    build: .
+    command: >
+      uv run celery -A shorts_pipeline.workers.celery_app.celery_app flower
+      --port=5555
+    env_file: .env
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:

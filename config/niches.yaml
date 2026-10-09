@@ -1,0 +1,26 @@
+# Discovery niches / keywords / channel seeds
+# Channels listed here are search hints only — authorization still requires
+# whitelist membership OR Creative Commons license.
+
+niches:
+  - name: tech_fr
+    keywords:
+      - "intelligence artificielle français"
+      - "tutorial python"
+      - "productivité développeur"
+    languages: [fr]
+    min_duration_sec: 480
+    max_duration_sec: 3600
+
+  - name: tech_en
+    keywords:
+      - "AI explained"
+      - "python tutorial"
+      - "developer productivity"
+    languages: [en]
+    min_duration_sec: 480
+    max_duration_sec: 3600
+
+# Optional channel IDs to poll first (must also be in channels_whitelist to process
+# non-CC videos).
+seed_channels: []
