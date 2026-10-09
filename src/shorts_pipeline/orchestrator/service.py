@@ -8,6 +8,12 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from shorts_pipeline.agents.discovery.agent import DiscoveryAgent, DiscoveryInput
+from shorts_pipeline.agents.discovery.persist import (
+    load_seen_video_ids,
+    load_whitelist_channel_ids,
+    persist_discovered_videos,
+)
 from shorts_pipeline.agents.dummy import (
     DummyAnalysisAgent,
     DummyAnalysisInput,
@@ -18,6 +24,7 @@ from shorts_pipeline.agents.dummy import (
     DummyPublishingAgent,
     DummyPublishingInput,
 )
+from shorts_pipeline.clients.youtube import YouTubeClient
 from shorts_pipeline.config import Settings, get_settings
 from shorts_pipeline.db.enums import (
     AgentName,
@@ -48,13 +55,34 @@ MAX_ATTEMPTS_BEFORE_DEAD_LETTER = 3
 class Orchestrator:
     """Coordinates agent runs and persists state transitions."""
 
-    def __init__(self, session: Session, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        session: Session,
+        settings: Settings | None = None,
+        *,
+        discovery_agent: DiscoveryAgent | DummyDiscoveryAgent | None = None,
+        youtube_client: YouTubeClient | None = None,
+    ) -> None:
         self.session = session
         self.settings = settings or get_settings()
-        self.discovery = DummyDiscoveryAgent()
+        self.youtube_client = youtube_client
+        self.discovery: DiscoveryAgent | DummyDiscoveryAgent = (
+            discovery_agent or self._build_discovery_agent()
+        )
         self.analysis = DummyAnalysisAgent()
         self.editing = DummyEditingAgent()
         self.publishing = DummyPublishingAgent()
+
+    def _build_discovery_agent(self) -> DiscoveryAgent | DummyDiscoveryAgent:
+        """Use real DiscoveryAgent when a YouTube API key (or injected client) is available."""
+        if self.youtube_client is not None:
+            return DiscoveryAgent(self.youtube_client, settings=self.settings)
+        key = self.settings.youtube_api_key
+        if key is not None and key.get_secret_value():
+            client = YouTubeClient(api_key=key.get_secret_value(), settings=self.settings)
+            return DiscoveryAgent(client, settings=self.settings)
+        logger.warning("discovery.using_dummy_agent_no_youtube_api_key")
+        return DummyDiscoveryAgent()
 
     # ------------------------------------------------------------------ discovery
     def run_discovery(
@@ -72,43 +100,66 @@ class Orchestrator:
             input_payload={"niches": niches or []},
         )
         try:
-            result = self.discovery.run(
-                DummyDiscoveryInput(niches=niches or [], dry_run=self.settings.dry_run)
-            )
-            created_ids: list[int] = []
-            for yt_id in result.video_ids:
-                existing = (
-                    self.session.query(SourceVideo).filter_by(youtube_video_id=yt_id).one_or_none()
+            created_ids: list[int]
+            meta: dict[str, Any] = {}
+
+            if isinstance(self.discovery, DiscoveryAgent):
+                result = self.discovery.run(
+                    DiscoveryInput(
+                        niches=niches or [],
+                        dry_run=self.settings.dry_run,
+                        already_seen_ids=load_seen_video_ids(self.session),
+                        whitelist_channel_ids=load_whitelist_channel_ids(self.session),
+                    )
                 )
-                if existing:
-                    continue
-                video = SourceVideo(
-                    youtube_video_id=yt_id,
-                    youtube_channel_id="UC_DUMMY_CHANNEL",
-                    title=f"Dummy video {yt_id}",
-                    license="creativeCommon",
-                    license_basis=LicenseBasis.CREATIVE_COMMONS,
-                    status=VideoStatus.DISCOVERED,
-                    relevance_score=75.0,
-                    duration_sec=1200,
-                    language="fr",
+                created_ids = persist_discovered_videos(self.session, result.videos)
+                meta = {
+                    "skipped_unauthorized": result.skipped_unauthorized,
+                    "skipped_duplicate": result.skipped_duplicate,
+                    "skipped_low_score": result.skipped_low_score,
+                    "quota_remaining": result.quota_remaining,
+                    "kept": len(result.videos),
+                }
+            else:
+                result_dummy = self.discovery.run(
+                    DummyDiscoveryInput(niches=niches or [], dry_run=self.settings.dry_run)
                 )
-                self.session.add(video)
-                self.session.flush()
-                created_ids.append(video.id)
+                created_ids = []
+                for yt_id in result_dummy.video_ids:
+                    existing = (
+                        self.session.query(SourceVideo)
+                        .filter_by(youtube_video_id=yt_id)
+                        .one_or_none()
+                    )
+                    if existing:
+                        continue
+                    video = SourceVideo(
+                        youtube_video_id=yt_id,
+                        youtube_channel_id="UC_DUMMY_CHANNEL",
+                        title=f"Dummy video {yt_id}",
+                        license="creativeCommon",
+                        license_basis=LicenseBasis.CREATIVE_COMMONS,
+                        status=VideoStatus.DISCOVERED,
+                        relevance_score=75.0,
+                        duration_sec=1200,
+                        language="fr",
+                    )
+                    self.session.add(video)
+                    self.session.flush()
+                    created_ids.append(video.id)
 
             duration = time.perf_counter() - started
             finish_job(
                 self.session,
                 job,
                 status=JobStatus.SUCCESS,
-                output_payload={"created_ids": created_ids},
+                output_payload={"created_ids": created_ids, **meta},
                 duration_sec=duration,
             )
             JOBS_TOTAL.labels(agent="discovery", status="success").inc()
             JOB_DURATION_SECONDS.labels(agent="discovery").observe(duration)
             self.session.commit()
-            return {"success": True, "created_ids": created_ids, "job_id": job.id}
+            return {"success": True, "created_ids": created_ids, "job_id": job.id, **meta}
         except Exception as exc:
             self.session.rollback()
             self._fail_job(job, exc, agent="discovery", started=started)

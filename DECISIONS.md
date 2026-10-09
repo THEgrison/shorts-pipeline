@@ -41,3 +41,14 @@ Agent pause uses Redis keys when available; falls back to a process-local set so
 
 ### `require_review` gates publishing
 Default `REQUIRE_REVIEW=true`: after render, clips enter `awaiting_review` until `/api/pipeline/clips/{id}/approve`.
+
+## 2026-10-09 — Phase 3
+
+### Discovery falls back to DummyAgent without `YOUTUBE_API_KEY`
+Keeps local/CI runnable; production sets the key and gets the real agent automatically.
+
+### CC-first search + optional whitelist search
+Always query `videoLicense=creativeCommon` first (cheaper authorization). General search only runs when a whitelist is non-empty, to find owned-channel videos.
+
+### Scoring weights (simple, tunable later)
+Views 25 / like-ratio 20 / velocity 20 / freshness 15 / duration 15 / language 5 = 100.
