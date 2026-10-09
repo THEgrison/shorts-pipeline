@@ -52,3 +52,11 @@ Always query `videoLicense=creativeCommon` first (cheaper authorization). Genera
 
 ### Scoring weights (simple, tunable later)
 Views 25 / like-ratio 20 / velocity 20 / freshness 15 / duration 15 / language 5 = 100.
+
+## 2026-10-09 — Phase 4–5
+
+### Analysis collaborators are injectable
+Downloader / Transcriber / MomentDetector interfaces allow Fake* doubles in tests while production uses yt-dlp, faster-whisper, Claude.
+
+### Editing falls back to Dummy when media is invalid
+Orchestrator probes with ffprobe before invoking ffmpeg so placeholder analysis files do not crash the pipeline in tests/dry-run.

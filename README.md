@@ -139,8 +139,8 @@ Stockage fichiers : volume `/data/shorts` derrière l’interface `StorageBacken
 1. ✅ Squelette, Docker, config, DB, logging, CI  
 2. ✅ Orchestrator + Celery + agent factice  
 3. ✅ Discovery Agent (licence + score + dédup)  
-4. Analysis Agent  
-5. Editing Agent  
+4. ✅ Analysis Agent (yt-dlp, Whisper, LLM)  
+5. ✅ Editing Agent (9:16, ASS, loudnorm)  
 6. Publishing Agent  
 7. Dashboard + review + notifications  
 8. Durcissement / monitoring / doc finale  

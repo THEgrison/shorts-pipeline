@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -28,6 +29,8 @@ from shorts_pipeline.agents.dummy import (
     DummyPublishingAgent,
     DummyPublishingInput,
 )
+from shorts_pipeline.agents.editing.agent import EditingAgent, EditingInput
+from shorts_pipeline.agents.editing.persist import persist_render
 from shorts_pipeline.clients.youtube import YouTubeClient
 from shorts_pipeline.config import Settings, get_settings
 from shorts_pipeline.db.enums import (
@@ -39,7 +42,7 @@ from shorts_pipeline.db.enums import (
     RenderStatus,
     VideoStatus,
 )
-from shorts_pipeline.db.models import Clip, JobLog, Publication, Render, SourceVideo
+from shorts_pipeline.db.models import Clip, JobLog, Publication, Render, SourceVideo, Transcript
 from shorts_pipeline.logging_setup import get_logger
 from shorts_pipeline.metrics import JOB_DURATION_SECONDS, JOBS_TOTAL
 from shorts_pipeline.orchestrator.job_logger import finish_job, start_job
@@ -66,6 +69,7 @@ class Orchestrator:
         *,
         discovery_agent: DiscoveryAgent | DummyDiscoveryAgent | None = None,
         analysis_agent: AnalysisAgent | None = None,
+        editing_agent: EditingAgent | DummyEditingAgent | None = None,
         youtube_client: YouTubeClient | None = None,
     ) -> None:
         self.session = session
@@ -75,7 +79,9 @@ class Orchestrator:
             discovery_agent or self._build_discovery_agent()
         )
         self.analysis = analysis_agent or self._build_analysis_agent()
-        self.editing = DummyEditingAgent()
+        self.editing: EditingAgent | DummyEditingAgent = editing_agent or EditingAgent(
+            settings=self.settings
+        )
         self.publishing = DummyPublishingAgent()
 
     def _build_discovery_agent(self) -> DiscoveryAgent | DummyDiscoveryAgent:
@@ -96,9 +102,7 @@ class Orchestrator:
             and self.settings.anthropic_api_key.get_secret_value()
         )
         # Tests / local dry-run without Anthropic: fully mocked collaborators
-        if self.settings.app_env == "test" or (
-            not has_anthropic and self.settings.dry_run
-        ):
+        if self.settings.app_env == "test" or (not has_anthropic and self.settings.dry_run):
             return build_test_analysis_agent(settings=self.settings)
         return AnalysisAgent(settings=self.settings)
 
@@ -313,22 +317,7 @@ class Orchestrator:
                 self.session.commit()
                 return {"success": True, "idempotent": True, "render_id": existing.id}
 
-            result = self.editing.run(
-                DummyEditingInput(clip_id=clip_id, dry_run=self.settings.dry_run)
-            )
-            render = Render(
-                clip_id=clip_id,
-                status=RenderStatus.RENDERED,
-                storage_key=result.storage_key,
-                thumbnail_key=f"thumbnails/dummy_clip_{clip_id}.jpg",
-                style_template_name=self.settings.editing_default_style_template,
-                duration_sec=clip.end_sec - clip.start_sec,
-                title=clip.suggested_title,
-                description=clip.reason,
-            )
-            self.session.add(render)
-            self.session.flush()
-
+            render_id = self._execute_edit(clip)
             clip.status = apply_clip_transition(clip.status, ClipStatus.RENDERED)
             next_status = next_clip_step(clip.status, require_review=self.settings.require_review)
             if next_status is not None:
@@ -339,7 +328,7 @@ class Orchestrator:
                 self.session,
                 job,
                 status=JobStatus.SUCCESS,
-                output_payload={"render_id": render.id, "clip_status": clip.status.value},
+                output_payload={"render_id": render_id, "clip_status": clip.status.value},
                 duration_sec=duration,
             )
             JOBS_TOTAL.labels(agent="editing", status="success").inc()
@@ -347,7 +336,7 @@ class Orchestrator:
             self.session.commit()
             return {
                 "success": True,
-                "render_id": render.id,
+                "render_id": render_id,
                 "clip_status": clip.status.value,
                 "job_id": job.id,
             }
@@ -538,6 +527,105 @@ class Orchestrator:
         return clip
 
     # ------------------------------------------------------------------ helpers
+    def _execute_edit(self, clip: Clip) -> int:
+        """Run editing agent (real ffmpeg when source exists, else dummy)."""
+        source = clip.source_video
+        source_path = self._resolve_source_path(source)
+        transcript = (
+            self.session.query(Transcript)
+            .filter_by(source_video_id=clip.source_video_id)
+            .one_or_none()
+        )
+        words = list(transcript.words) if transcript else []
+
+        if (
+            isinstance(self.editing, EditingAgent)
+            and source_path is not None
+            and self._is_valid_media(source_path)
+        ):
+            end = min(clip.end_sec, clip.start_sec + self.settings.editing_max_duration_sec)
+            result = self.editing.run(
+                EditingInput(
+                    clip_id=clip.id,
+                    source_video_path=source_path,
+                    start_sec=clip.start_sec,
+                    end_sec=end,
+                    words=words,
+                    title=clip.suggested_title,
+                    description=clip.reason,
+                    dry_run=self.settings.dry_run,
+                )
+            )
+            return persist_render(self.session, result)
+
+        # Fallback dummy path (no valid source media available)
+        logger.warning("editing.fallback_dummy", clip_id=clip.id, path=str(source_path))
+        dummy = self.editing if isinstance(self.editing, DummyEditingAgent) else DummyEditingAgent()
+        dummy_out = dummy.run(DummyEditingInput(clip_id=clip.id, dry_run=self.settings.dry_run))
+        render = Render(
+            clip_id=clip.id,
+            status=RenderStatus.RENDERED,
+            storage_key=dummy_out.storage_key,
+            thumbnail_key=f"thumbnails/dummy_clip_{clip.id}.jpg",
+            style_template_name=self.settings.editing_default_style_template,
+            duration_sec=clip.end_sec - clip.start_sec,
+            title=clip.suggested_title,
+            description=clip.reason,
+        )
+        self.session.add(render)
+        self.session.flush()
+        return render.id
+
+    def _resolve_source_path(self, source: SourceVideo | None) -> Path | None:
+        if source is None:
+            return None
+        if source.storage_key:
+            candidate = Path(source.storage_key)
+            if candidate.exists():
+                return candidate
+            # Local storage root relative key
+            rooted = self.settings.storage_local_root / source.storage_key
+            if rooted.exists():
+                return rooted
+        # Convention used by analysis temp downloads
+        guess = (
+            self.settings.storage_temp_dir
+            / f"analysis_{source.youtube_video_id}"
+            / f"{source.youtube_video_id}.mp4"
+        )
+        if guess.exists():
+            return guess
+        return None
+
+    @staticmethod
+    def _is_valid_media(path: Path) -> bool:
+        """Return True if ffprobe can read the file as video."""
+        import json
+        import subprocess
+
+        try:
+            proc = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "quiet",
+                    "-print_format",
+                    "json",
+                    "-show_streams",
+                    str(path),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if proc.returncode != 0:
+                return False
+            data = json.loads(proc.stdout or "{}")
+            return any(s.get("codec_type") == "video" for s in data.get("streams", []))
+        except Exception:
+            return False
+
     def _ensure_dummy_account(self) -> int:
         from shorts_pipeline.db.enums import Platform
         from shorts_pipeline.db.models import Account
